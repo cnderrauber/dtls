@@ -11,4 +11,5 @@ const (
 	SRTP_AES128_CM_HMAC_SHA1_32 SRTPProtectionProfile = extension.SRTP_AES128_CM_HMAC_SHA1_32 // nolint
 	SRTP_AEAD_AES_128_GCM       SRTPProtectionProfile = extension.SRTP_AEAD_AES_128_GCM       // nolint
 	SRTP_AEAD_AES_256_GCM       SRTPProtectionProfile = extension.SRTP_AEAD_AES_256_GCM       // nolint
+	SRTP_UNENCRYPTED            SRTPProtectionProfile = extension.SRTP_UNENCRYPTED            // nolint
 )

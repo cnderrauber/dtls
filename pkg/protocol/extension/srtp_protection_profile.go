@@ -9,6 +9,7 @@ const (
 	SRTP_AES128_CM_HMAC_SHA1_32 SRTPProtectionProfile = 0x0002 // nolint
 	SRTP_AEAD_AES_128_GCM       SRTPProtectionProfile = 0x0007 // nolint
 	SRTP_AEAD_AES_256_GCM       SRTPProtectionProfile = 0x0008 // nolint
+	SRTP_UNENCRYPTED            SRTPProtectionProfile = 0x0010 // nolint
 )
 
 func srtpProtectionProfiles() map[SRTPProtectionProfile]bool {
@@ -17,5 +18,6 @@ func srtpProtectionProfiles() map[SRTPProtectionProfile]bool {
 		SRTP_AES128_CM_HMAC_SHA1_32: true,
 		SRTP_AEAD_AES_128_GCM:       true,
 		SRTP_AEAD_AES_256_GCM:       true,
+		SRTP_UNENCRYPTED:            true,
 	}
 }
