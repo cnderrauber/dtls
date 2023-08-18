@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
+	"runtime/pprof"
 	"sync/atomic"
 	"time"
 
@@ -40,6 +42,7 @@ var (
 func main() {
 	flag.Parse()
 
+	go report()
 	if *listenPort > 0 {
 		server()
 	} else {
@@ -71,70 +74,91 @@ func server() {
 			return h.ContentType == protocol.ContentTypeHandshake
 		}
 	}
+	var writeProfile atomic.Bool
 
-	laddr := net.UDPAddr{Port: *listenPort}
-	listener, err := lc.Listen("udp", &laddr)
-	if err != nil {
-		panic(err)
-	}
-
-	if *dtlsMode {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		dtlsListener, err := dtls.NewListener(listener, &dtls.Config{
-			PSK: func(hint []byte) ([]byte, error) {
-				fmt.Printf("Client's hint: %s \n", hint)
-				return []byte{0xAB, 0xC1, 0x23}, nil
-			},
-			PSKIdentityHint:      []byte("Pion DTLS Client"),
-			CipherSuites:         []dtls.CipherSuiteID{dtls.TLS_PSK_WITH_AES_128_GCM_SHA256},
-			ExtendedMasterSecret: dtls.RequireExtendedMasterSecret,
-			// Create timeout context for accepted connection.
-			ConnectContextMaker: func() (context.Context, func()) {
-				return context.WithTimeout(ctx, 30*time.Second)
-			},
-		})
-		if err != nil {
-			panic(err)
-		}
-
-		listener = dtlsListener
-	}
-
-	// time.AfterFunc(*duration, func() {
-	// 	listener.Close()
-	// })
-
-	go report()
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			fmt.Println("accept error:", err)
-			break
-		}
-		fmt.Println("connected, raddr: ", conn.RemoteAddr(), "err", err)
-		go func(conn net.Conn) {
-			defer conn.Close()
-			if *reverseRW {
-				writeConn(conn)
-			} else {
-				readConn(conn)
-			}
-
-		}(conn)
-	}
-}
-
-func client() {
-	go report()
 	for i := 0; i < *concurrency; i++ {
+		port := *listenPort + i
 		go func() {
-			raddr, err := net.ResolveUDPAddr("udp", *connectHost)
+			laddr := net.UDPAddr{Port: port}
+			listener, err := lc.Listen("udp", &laddr)
 			if err != nil {
 				panic(err)
 			}
 
+			if *dtlsMode {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				dtlsListener, err := dtls.NewListener(listener, &dtls.Config{
+					PSK: func(hint []byte) ([]byte, error) {
+						fmt.Printf("Client's hint: %s \n", hint)
+						return []byte{0xAB, 0xC1, 0x23}, nil
+					},
+					PSKIdentityHint:      []byte("Pion DTLS Client"),
+					CipherSuites:         []dtls.CipherSuiteID{dtls.TLS_PSK_WITH_AES_128_GCM_SHA256},
+					ExtendedMasterSecret: dtls.RequireExtendedMasterSecret,
+					// Create timeout context for accepted connection.
+					ConnectContextMaker: func() (context.Context, func()) {
+						return context.WithTimeout(ctx, 30*time.Second)
+					},
+				})
+				if err != nil {
+					panic(err)
+				}
+
+				listener = dtlsListener
+			}
+
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					fmt.Println("accept error:", err)
+					break
+				}
+				fmt.Println("connected, raddr: ", conn.RemoteAddr(), "err", err)
+				if writeProfile.CompareAndSwap(true, false) {
+					go func() {
+						time.Sleep(15 * time.Second)
+						lockf, _ := os.Create("block.pprof")
+						defer lockf.Close()
+						mtxf, _ := os.Create("mutex.pprof")
+						defer mtxf.Close()
+						f, _ := os.Create("cpu.pprof")
+						defer f.Close()
+						_ = pprof.StartCPUProfile(f)
+						runtime.SetBlockProfileRate(1)
+						runtime.SetMutexProfileFraction(1)
+
+						time.Sleep(30 * time.Second)
+						pprof.StopCPUProfile()
+						pprof.Lookup("block").WriteTo(lockf, 0)
+						pprof.Lookup("mutex").WriteTo(mtxf, 0)
+					}()
+				}
+				go func(conn net.Conn) {
+					defer conn.Close()
+					if *reverseRW {
+						writeConn(conn)
+					} else {
+						readConn(conn)
+					}
+
+				}(conn)
+			}
+		}()
+	}
+	time.Sleep(1 * time.Hour)
+}
+
+func client() {
+	addr, err := net.ResolveUDPAddr("udp", *connectHost)
+	if err != nil {
+		panic(err)
+	}
+	for i := 0; i < *concurrency; i++ {
+		port := addr.Port + i
+		go func() {
+			raddr := *addr
+			raddr.Port = port
 			var (
 				conn    net.Conn
 				udpConn *net.UDPConn
@@ -147,17 +171,17 @@ func client() {
 						return []byte{0xAB, 0xC1, 0x23}, nil
 					},
 					PSKIdentityHint:      []byte("Pion DTLS Server"),
-					CipherSuites:         []dtls.CipherSuiteID{dtls.TLS_PSK_WITH_AES_128_CCM_8},
+					CipherSuites:         []dtls.CipherSuiteID{dtls.TLS_PSK_WITH_AES_128_GCM_SHA256},
 					ExtendedMasterSecret: dtls.RequireExtendedMasterSecret,
 				}
 
 				// Connect to a DTLS server
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
-				conn, err = dtls.DialWithContext(ctx, "udp", raddr, config)
+				conn, err = dtls.DialWithContext(ctx, "udp", &raddr, config)
 			} else {
 				if *connectedMode {
-					udpConn, err = net.DialUDP("udp", nil, raddr)
+					udpConn, err = net.DialUDP("udp", nil, &raddr)
 					conn = udpConn
 				} else {
 					udpConn, err = net.ListenUDP("udp", nil)
@@ -175,7 +199,7 @@ func client() {
 					writeBatch(conn.(*net.UDPConn))
 				} else {
 					if !*connectedMode && udpConn != nil {
-						writeToConn(udpConn, raddr)
+						writeToConn(udpConn, &raddr)
 					} else {
 						writeConn(conn)
 					}
@@ -189,10 +213,11 @@ func client() {
 }
 
 func readConn(conn net.Conn) {
-	buf := make([]byte, *pktSize)
+	buf := make([]byte, *pktSize*2)
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
+			panic(err)
 			break
 		}
 
