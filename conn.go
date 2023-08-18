@@ -341,7 +341,7 @@ func (c *Conn) Write(p []byte) (int, error) {
 		return 0, errHandshakeInProgress
 	}
 
-	return len(p), c.writePackets(c.writeDeadline, []*packet{
+	return len(p), c.writePackets(nil, []*packet{
 		{
 			record: &recordlayer.RecordLayer{
 				Header: recordlayer.Header{
@@ -421,8 +421,15 @@ func (c *Conn) writePackets(ctx context.Context, pkts []*packet) error {
 	compactedRawPackets := c.compactRawPackets(rawPackets)
 
 	for _, compactedRawPackets := range compactedRawPackets {
-		if _, err := c.nextConn.WriteContext(ctx, compactedRawPackets); err != nil {
-			return netError(err)
+		if ctx != nil {
+
+			if _, err := c.nextConn.WriteContext(ctx, compactedRawPackets); err != nil {
+				return netError(err)
+			}
+		} else {
+			if _, err := c.nextConn.Conn().Write(compactedRawPackets); err != nil {
+				return netError(err)
+			}
 		}
 	}
 

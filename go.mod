@@ -9,4 +9,5 @@ require (
 
 go 1.13
 
-replace github.com/pion/transport/v2 => github.com/cnderrauber/transport/v2 v2.0.0-20230810042620-8484991bc1c5
+//replace github.com/pion/transport/v2 => github.com/cnderrauber/transport/v2 v2.0.0-20230810043126-fc98db508e00
+replace github.com/pion/transport/v2 => ../transport

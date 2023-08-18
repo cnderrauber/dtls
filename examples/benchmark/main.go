@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
+	"runtime/pprof"
 	"sync/atomic"
 	"time"
 
@@ -87,7 +89,7 @@ func server() {
 				return []byte{0xAB, 0xC1, 0x23}, nil
 			},
 			PSKIdentityHint:      []byte("Pion DTLS Client"),
-			CipherSuites:         []dtls.CipherSuiteID{dtls.TLS_PSK_WITH_AES_128_CCM_8},
+			CipherSuites:         []dtls.CipherSuiteID{dtls.TLS_PSK_WITH_AES_128_GCM_SHA256},
 			ExtendedMasterSecret: dtls.RequireExtendedMasterSecret,
 			// Create timeout context for accepted connection.
 			ConnectContextMaker: func() (context.Context, func()) {
@@ -107,6 +109,8 @@ func server() {
 
 	go report()
 
+	var writeProfile = false
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -114,6 +118,26 @@ func server() {
 			break
 		}
 		fmt.Println("connected, raddr: ", conn.RemoteAddr(), "err", err)
+		if !writeProfile {
+			writeProfile = true
+			go func() {
+				time.Sleep(15 * time.Second)
+				lockf,_ :=os.Create("block.pprof")
+				defer lockf.Close()
+				mtxf,_ :=os.Create("mutex.pprof")
+				defer mtxf.Close()
+				f, _ := os.Create("cpu.pprof")
+				defer f.Close()
+				_ = pprof.StartCPUProfile(f)
+				runtime.SetBlockProfileRate(1)
+				runtime.SetMutexProfileFraction(1)
+
+				time.Sleep(30 * time.Second)
+				pprof.StopCPUProfile()
+				pprof.Lookup("block").WriteTo(lockf, 0)
+				pprof.Lookup("mutex").WriteTo(mtxf, 0)
+			}()
+		}
 		go func(conn net.Conn) {
 			defer conn.Close()
 			if *reverseRW {
@@ -176,10 +200,11 @@ func client() {
 }
 
 func readConn(conn net.Conn) {
-	buf := make([]byte, *pktSize)
+	buf := make([]byte, *pktSize*2)
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
+			panic(err)
 			break
 		}
 
