@@ -87,7 +87,7 @@ func server() {
 				return []byte{0xAB, 0xC1, 0x23}, nil
 			},
 			PSKIdentityHint:      []byte("Pion DTLS Client"),
-			CipherSuites:         []dtls.CipherSuiteID{dtls.TLS_PSK_WITH_AES_128_CCM_8},
+			CipherSuites:         []dtls.CipherSuiteID{dtls.TLS_PSK_WITH_AES_128_GCM_SHA256},
 			ExtendedMasterSecret: dtls.RequireExtendedMasterSecret,
 			// Create timeout context for accepted connection.
 			ConnectContextMaker: func() (context.Context, func()) {
@@ -135,7 +135,10 @@ func client() {
 				panic(err)
 			}
 
-			var conn net.Conn
+			var (
+				conn    net.Conn
+				udpConn *net.UDPConn
+			)
 
 			if *dtlsMode {
 				config := &dtls.Config{
@@ -153,7 +156,13 @@ func client() {
 				defer cancel()
 				conn, err = dtls.DialWithContext(ctx, "udp", raddr, config)
 			} else {
-				conn, err = net.DialUDP("udp", nil, raddr)
+				if *connectedMode {
+					udpConn, err = net.DialUDP("udp", nil, raddr)
+					conn = udpConn
+				} else {
+					udpConn, err = net.ListenUDP("udp", nil)
+					conn = udpConn
+				}
 			}
 			if err != nil {
 				panic(err)
@@ -165,7 +174,11 @@ func client() {
 				if *batch {
 					writeBatch(conn.(*net.UDPConn))
 				} else {
-					writeConn(conn)
+					if !*connectedMode && udpConn != nil {
+						writeToConn(udpConn, raddr)
+					} else {
+						writeConn(conn)
+					}
 				}
 			}
 		}()
@@ -195,6 +208,25 @@ func writeConn(conn net.Conn) {
 	buf := make([]byte, *pktSize)
 	for {
 		n, err := conn.Write(buf)
+		if err != nil {
+			if err == io.ErrClosedPipe {
+				break
+			}
+			panic(err)
+		}
+
+		atomic.AddInt64(&packet, 1)
+		atomic.AddInt64(&bytes, int64(n))
+
+		atomic.AddInt64(&totalPacket, 1)
+		atomic.AddInt64(&totalBytes, int64(n))
+	}
+}
+
+func writeToConn(conn *net.UDPConn, addr net.Addr) {
+	buf := make([]byte, *pktSize)
+	for {
+		n, err := conn.WriteTo(buf, addr)
 		if err != nil {
 			if err == io.ErrClosedPipe {
 				break
