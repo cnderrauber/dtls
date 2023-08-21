@@ -325,6 +325,31 @@ func (c *Conn) Read(p []byte) (n int, err error) {
 	}
 }
 
+func (c *Conn) WriteWithoutDeadline(p []byte) (int, error) {
+	if c.isConnectionClosed() {
+		return 0, ErrConnClosed
+	}
+
+	if !c.isHandshakeCompletedSuccessfully() {
+		return 0, errHandshakeInProgress
+	}
+
+	return len(p), c.writePackets(context.TODO(), []*packet{
+		{
+			record: &recordlayer.RecordLayer{
+				Header: recordlayer.Header{
+					Epoch:   c.state.getLocalEpoch(),
+					Version: protocol.Version1_2,
+				},
+				Content: &protocol.ApplicationData{
+					Data: p,
+				},
+			},
+			shouldEncrypt: true,
+		},
+	})
+}
+
 // Write writes len(p) bytes from p to the DTLS connection
 func (c *Conn) Write(p []byte) (int, error) {
 	if c.isConnectionClosed() {
@@ -341,7 +366,7 @@ func (c *Conn) Write(p []byte) (int, error) {
 		return 0, errHandshakeInProgress
 	}
 
-	return len(p), c.writePackets(nil, []*packet{
+	return len(p), c.writePackets(c.writeDeadline, []*packet{
 		{
 			record: &recordlayer.RecordLayer{
 				Header: recordlayer.Header{
@@ -421,8 +446,7 @@ func (c *Conn) writePackets(ctx context.Context, pkts []*packet) error {
 	compactedRawPackets := c.compactRawPackets(rawPackets)
 
 	for _, compactedRawPackets := range compactedRawPackets {
-		if ctx != nil {
-
+		if ctx != context.TODO() && ctx != context.Background() {
 			if _, err := c.nextConn.WriteContext(ctx, compactedRawPackets); err != nil {
 				return netError(err)
 			}

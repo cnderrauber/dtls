@@ -58,8 +58,6 @@ func server() {
 			WriteBatchSize:     *batchSize,
 			WriteBatchInterval: *batchInterval,
 		},
-		ForkSocket:           *connectedMode,
-		DelayForkSocketBatch: true,
 	}
 	if *dtlsMode {
 		lc.AcceptFilter = func(packet []byte) bool {
